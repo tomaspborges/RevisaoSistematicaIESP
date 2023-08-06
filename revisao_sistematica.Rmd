@@ -1,0 +1,543 @@
+---
+title: "Revisão Sistemática - Trabalho Final de Instituições"
+author: "Tomás Paixão Borges"
+date: "2023-07-14"
+output: html_document
+---
+
+# Contextualização
+
+Este código será utilizado para o trabalho final de Instituições em Perspectivas Comparadas, disciplina do IESP-UERJ. Nosso objetivo será realizar a revisão sistemática dos artigos que tratam sobre a temática de votos e política distributiva de bens duráveis. 
+
+A pesquisa dos materiais foi realizada através da plataforma Publish and Perish, sendo dividida em 8 sintaxes de busca distintas. As pesquisas foram somadas e baixadas para manipulação no R. 
+
+```{r Importando pacotes, warning = F, message = F}
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(readxl)
+library(kableExtra)
+library(cowplot)
+library(openxlsx)
+library(tidygraph)
+library(visNetwork)
+library(igraph)
+```
+
+Em primeiro lugar, trabalhamos com a base retirada diretamente do Publish and Perish.
+
+# Passos iniciais: alterações na base de dados e criação de novas bases
+
+## Importando base de dados
+
+```{r}
+bd_pop <- read.csv("search_pop.csv")
+revistas_a1 <- read.xlsx("revistas_a1.xlsx")
+revistas_a1_economia <- read.xlsx("revistas_a1_economia.xlsx")
+```
+
+## Limpando a base de dados original
+
+```{r}
+# Ano >= 2000
+bd_pop <- bd_pop %>% filter (Year >=2000)
+
+# Apenas artigos únicos (não-repetidos), de acordo com o título e ano.
+bd_pop <- bd_pop %>%
+  group_by(Title, Year) %>%
+  distinct()
+```
+
+## Criando novas bases
+
+### Filtrando apenas pelas revistas A1
+```{r}
+bd_pop_a1 <- bd_pop %>% filter (toupper(Source) %in% revistas_a1$Título)
+```
+
+### Papers que tem em seu abstract a palavra "vote" ou outras correlatas e estão em revistas A1 (CP)
+```{r}
+library(stringr)
+# Filtrar as linhas que contêm a keyword "in-kind" ou similares na coluna "abstract"
+bd_pop_in_kind <- bd_pop[str_detect(bd_pop$Abstract, "in-kind|durable|in kind"), ]
+
+# Filtrar as linhas que contêm a keyword "vote" ou similares na coluna "abstract"
+bd_pop_vote <- bd_pop[str_detect(bd_pop$Abstract, "vote|ballot|election|poll|votes|support"), ]
+
+# Filtrar as revistas A1
+bd_pop_in_kind_a1 <- bd_pop_in_kind %>% filter (toupper(Source) %in% revistas_a1$Título)
+bd_pop_vote_a1 <- bd_pop_vote %>% filter (toupper(Source) %in% revistas_a1$Título)
+
+# Juntando os dois dataframes (contendo vote/in-kind e similares no abstract)
+bd_pop_in_kind_vote_a1 <- bind_rows(bd_pop_in_kind_a1, bd_pop_vote_a1)
+```
+
+### Papers que tem em seu abstract a palavra "vote" ou outras correlatas e estão em revistas A1 (Economia)
+```{r}
+bd_pop_in_kind_vote_a1_eco <- bd_pop[str_detect(bd_pop$Abstract, "in-kind|durable|in kind|housing"), ]
+bd_pop_in_kind_vote_a1_eco <- bd_pop_in_kind_vote_a1_eco[str_detect(bd_pop_in_kind_vote_a1_eco$Abstract, "vote|ballot|election|poll|votes|support"), ]
+bd_pop_in_kind_vote_a1_eco <- bd_pop_in_kind_vote_a1_eco %>% filter (toupper(Source) %in% revistas_a1_economia$Título) 
+
+```
+
+### Exportando esses papers para análise
+```{r}
+# Criando um excel para ler os abstracts
+
+write.xlsx(bd_pop_in_kind_a1, file = "bd_pop_in_kind_a1.xlsx", rowNames = FALSE)
+write.xlsx(bd_pop_vote_a1, file = "bd_pop_vote_a1.xlsx", rowNames = FALSE)
+write.xlsx(bd_pop_in_kind_vote_a1, file = "bd_pop_in_kind_vote_a1.xlsx", rowNames = FALSE)
+```
+
+# Trabalhando com a nova base de dados (após leitura manual dos textos)
+
+```{r}
+artigos_escolhidos <- read.xlsx("artigos_escolhidos.xlsx")
+```
+
+## Análise Exploratória dos Dados
+
+```{r}
+# Cores para os gráficos
+colorsslide <- c("#E7B800","coral2","#2E9FDF", "gray15", "gray50", "gray90")
+colorspaper <- c("gray15", "gray50","gray75", "gray90")
+colorspaper2 <- c("gray15", "gray30", "gray50","gray75", "gray90")
+
+# Número de artigos por ano
+
+artigos_contagem <- artigos_escolhidos %>%
+  group_by(Year) %>%
+  summarise(Count = n())
+
+ggplot(artigos_contagem, aes(x = Year, y = Count)) +
+  geom_line() +
+  theme_bw() +
+  labs(
+    x = "Ano",
+    y = "Quantidade de Publicações",
+    title = "Número de artigos por Ano",
+    caption = "Fonte dos dados: Publish and Perish"
+  ) +
+  theme (axis.text.x = element_text(angle = 45, hjust = 1))
+        
+# Nível de citação
+artigos_escolhidos$Cites_Faixa <- cut(artigos_escolhidos$Cites, 
+                                      breaks = c(-Inf, 10, 20, 30, Inf),
+                                      labels = c("0-10", "11-20", "21-30", ">30"))
+
+ggplot(artigos_escolhidos, aes (x=Year, fill = Cites_Faixa)) +
+    geom_bar() +
+    theme_bw() +
+    scale_fill_manual(values=colorspaper2) +
+    labs(x = "Ano",
+       y = "Quantidade de Publicações",
+       title = "Quantidade de Citações por Ano de Publicação",
+       caption = "Fonte dos dados: Publish and Perish",
+       fill = "Quantidade de Citações")
+    theme(axis.text.x = element_text(angle=45, hjust=1))
+
+
+# Por tema
+ggplot(artigos_escolhidos, aes (x=Region, fill = Theme2)) +
+    geom_bar() +
+    theme_bw() +
+      scale_fill_manual(values=colorspaper) +
+       labs(x = "Região",
+       y = "Quantidade de Publicações",
+       title = "Regiões abordadas e tema por paper",
+       caption = "Fonte dos dados: Publish and Perish",
+       fill = "Temas") +
+    theme(axis.text.x = element_text(angle=45, hjust=1))
+
+# Por uso privativo ou não 2.0
+ggplot(artigos_escolhidos, aes (x=ThemeCat)) +
+    geom_bar() +
+    theme_bw() +
+    labs(x = "Tipo do Bem Estudado",
+       y = "Quantidade de Publicações",
+       title = "Número de artigos e Tipo do Bem Estudado",
+       caption = "Fonte dos dados: Publish and Perish")
+    theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+### Top publicações e top citações
+
+```{r}
+# Top revistas
+
+frequencia_revistas <- artigos_escolhidos %>%
+  group_by(Source) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count))
+
+total_publicacoes <- nrow(artigos_escolhidos)
+
+top_revistas <- head(frequencia_revistas, 5)
+
+top_revistas <- top_revistas %>%
+  mutate(Percentagem = (Count / total_publicacoes) * 100)
+
+kable(top_revistas, 
+      col.names = c("Revista", "Frequência", "Percentagem (%)")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = "striped") %>%
+  add_header_above(c("As revistas com maior número de publicações" = 3))
+
+# Top citações artigos
+artigos_escolhidos <- artigos_escolhidos %>%
+  arrange(desc(Cites))
+
+top_artigos <- artigos_escolhidos %>% 
+  select (Title, Year, Source, Cites) %>%
+  head(5)
+
+kable(top_artigos, 
+      col.names = c("Título", "Ano", "Revista", "Número de Citações")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = "striped") %>%
+  add_header_above(c("As revistas com maior número de publicações" = 4))
+```
+
+
+### Por autor, método, país e universidade
+
+No caso dos autores, métodos e universidades, teremos que fazer pequenas mudanças nos dados.
+
+O problema é que há mais de uma informação em cada célula no BD original. Ex: autores = A1, A2, A3.
+
+```{r}
+# Autores
+autores_papers <- artigos_escolhidos %>%
+  separate_rows(Authors, sep = ",\\s*")
+
+author_counts <- autores_papers %>%
+  group_by(Authors) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count))
+
+ggplot(author_counts, aes(x = reorder(Authors, -Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Autores", y = "Número de Publicações", title = "Número de Publicações por Autor") +
+   theme_bw() +
+    scale_fill_manual(values=colorspaper) +
+    coord_flip()
+
+#########################################################################################
+
+# Universidades
+artigos_escolhidos_authors <- artigos_escolhidos %>%
+  separate_rows(Authors, sep = ",\\s*") %>%
+  mutate(Index = row_number())
+
+artigos_escolhidos_universities <- artigos_escolhidos %>%
+  separate_rows(UniversityAuthors, sep = ",\\s*") %>%
+  mutate(Index = row_number())
+
+autores_universidades <- left_join(artigos_escolhidos_authors, artigos_escolhidos_universities, by = "Index") %>%
+  select(Authors.x, UniversityAuthors.y) %>%
+  rename(Authors = Authors.x, University = UniversityAuthors.y)
+
+university_counts <- autores_universidades %>%
+  group_by(University) %>%
+  summarise(Count = n())
+
+university_counts <- university_counts %>%
+  arrange(Count)
+
+ggplot(university_counts, aes(x = reorder(University, -Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Universidade", y = "Número de Publicações", title = "Número de Publicações por Universidade") +
+   theme_bw() +
+  coord_flip()
+
+#########################################################################################
+
+# Métodos
+methods <- artigos_escolhidos %>%
+  separate_rows(Method, sep = ",\\s*")
+
+methods_counts <- methods %>%
+  group_by(Method) %>%
+  summarise(Count = n())
+
+methods_counts <- methods_counts %>%
+  arrange(Count)
+
+ggplot(methods_counts, aes(x = reorder(Method, -Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Métodos", y = "Quantidade de Publicações", title = "Métodos utilizados nos papers") +
+   theme_bw() +
+    scale_fill_manual(values=colorspaper) +
+  coord_flip()
+
+# Métodos 2 (experimental, quase, observacional)
+
+experiment <- artigos_escolhidos %>%
+  separate_rows(ExperimentType, sep = ",\\s*")
+
+methods_counts2 <- experiment %>%
+  group_by(ExperimentType) %>%
+  summarise(Count = n())
+
+methods_counts2 <- methods_counts2 %>%
+  arrange(Count)
+
+ggplot(methods_counts2, aes(x = reorder(ExperimentType, -Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Tipos de experimento", y = "Quantidade de Publicações", title = "Tipos de experimento") +
+   theme_bw() 
+
+####################################################################################
+# País
+country <- artigos_escolhidos %>%
+  separate_rows(Country, sep = ",\\s*")
+
+country_counts <- country %>%
+  group_by(Country) %>%
+  summarise(Count = n())
+
+country_counts <- country_counts %>%
+  arrange(Count)
+
+ggplot(country_counts, aes(x = reorder(Country, Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  labs(x = "País", y = "Número de Publicações", title = "Número de Publicações focadas em cada País") +
+   theme_bw() +
+    scale_fill_manual(values=colorspaper) +
+    theme(axis.text.x = element_text(angle=90, hjust=1))
+
+# Visualização país (outro tipo)
+
+country_counts <- country_counts %>%
+  arrange(-Count) %>% mutate (percent = Count/nrow(artigos_escolhidos)) %>%
+  head (5)
+
+kable(country_counts, 
+      col.names = c("País", "Frequência", "Percentagem (%)")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = "striped") %>%
+  add_header_above(c("Os países mais estudados nos artigos" = 3))
+
+# Privativo ou não-excludente
+
+privat_exc_counts <- artigos_escolhidos %>%
+  separate_rows(ThemeCat2, sep = ",\\s*") %>%
+  separate_rows(Authors, sep = ",\\s*")
+
+privat_exc_counts <- privat_exc_counts %>%
+  group_by (Authors, ThemeCat2) %>%
+  select (Authors, ThemeCat2)
+
+privat_exc_counts <- unique(privat_exc_counts)
+
+# Temas
+
+theme_counts <- artigos_escolhidos %>%
+  separate_rows(Theme2, sep = ",\\s*") %>%
+  separate_rows(Authors, sep = ",\\s*")
+
+theme_counts <- theme_counts %>%
+  group_by (Authors, Theme2) %>%
+  select (Authors, Theme2)
+
+theme_counts <- unique(theme_counts)
+
+
+```
+
+## Network Analysis
+
+```{r}
+# Network interativa (por artigo)
+
+autores_papers <- autores_papers %>% select (-Cites)
+
+network <- autores_papers %>%
+  as_tbl_graph()
+
+## Centralidade
+network %>%
+  activate(nodes) %>%
+  mutate(degree = centrality_degree()) %>%
+  as_tibble() %>%
+  arrange(desc(degree))
+
+## Visualização da Rede
+
+vis_network <- network %>%
+  mutate(group = if_else(condition = name %in% unique (autores_papers$Authors),
+                         true = "Authors",
+                         false = "Title")) %>%
+  toVisNetworkData()
+
+visNetwork(nodes = vis_network$nodes, edges = vis_network$edges,
+           width="100%", height="600px",
+           main = "Redes interativas de autores por paper") %>%
+  visLayout(randomSeed = 1000) %>%
+  addFontAwesome() %>% 
+  visGroups(groupname = "Title", shape = "icon",
+            icon = list (code = "f1ea", color = "darkblue")) %>%
+  visGroups(groupname = "Authors", shape = "icon",
+            icon = list (code = "f007", color = "black")) %>%
+  visOptions(highlightNearest = list(enabled = TRUE, hover = TRUE),
+             nodesIdSelection = TRUE) %>%
+  visInteraction(navigationButtons = TRUE) %>%
+  visNodes(label = vis_network$nodes$label)
+
+#######################################################################################################
+
+# Network interativa (por universidade)
+
+network <- autores_universidades %>%
+  as_tbl_graph()
+
+## Centralidade
+network %>%
+  activate(nodes) %>%
+  mutate(degree = centrality_degree()) %>%
+  as_tibble() %>%
+  arrange(desc(degree))
+
+## Visualização da Rede
+
+vis_network <- network %>%
+  mutate(group = if_else(condition = name %in% unique (autores_universidades$Authors),
+                         true = "Authors",
+                         false = "University")) %>%
+  toVisNetworkData()
+
+visNetwork(nodes = vis_network$nodes, edges = vis_network$edges,
+           width="100%",
+           main = "Redes interativas de autores por instituição") %>%
+  visGroups(groupname = "Authors", shape = "icon",
+            icon = list (code = "f007", color = "darkblue")) %>%
+  visGroups(groupname = "University", shape = "icon",
+            icon = list (code = "f19c", color = "black")) %>% 
+  addFontAwesome() %>%
+   visOptions(highlightNearest = list(enabled = TRUE, hover = TRUE),
+             nodesIdSelection = TRUE) %>%
+  visInteraction(navigationButtons = TRUE) 
+
+######################################################################################################
+
+# Network interativa (por privado ou não-excludente)
+
+network <- privat_exc_counts %>%
+  as_tbl_graph()
+
+## Centralidade
+network %>%
+  activate(nodes) %>%
+  mutate(degree = centrality_degree()) %>%
+  as_tibble() %>%
+  arrange(desc(degree))
+
+## Visualização da Rede
+
+vis_network <- network %>%
+  mutate(group = if_else(condition = name %in% unique (privat_exc_counts$Authors),
+                         true = "Authors",
+                         false = "ThemeCat2")) %>%
+  toVisNetworkData()
+
+visNetwork(nodes = vis_network$nodes, edges = vis_network$edges,
+           width="100%",
+           main = "Redes interativas de autores por tipo de bem estudado") %>%
+  visGroups(groupname = "Authors", shape = "icon",
+            icon = list (code = "f007", color = "darkblue")) %>%
+  visGroups(groupname = "ThemeCat2", shape = "icon",
+            icon = list (code = "f06b", color = "purple")) %>% 
+  addFontAwesome() %>%
+   visOptions(highlightNearest = list(enabled = TRUE, hover = TRUE),
+             nodesIdSelection = TRUE) %>%
+  visInteraction(navigationButtons = TRUE) 
+
+#####################################################################################################
+
+# Network interativa (por categoria)
+
+network <- theme_counts %>%
+  as_tbl_graph()
+
+## Centralidade
+network %>%
+  activate(nodes) %>%
+  mutate(degree = centrality_degree()) %>%
+  as_tibble() %>%
+  arrange(desc(degree))
+
+## Visualização da Rede
+
+vis_network <- network %>%
+  mutate(group = if_else(condition = name %in% unique (theme_counts$Authors),
+                         true = "Authors",
+                         false = "Theme2")) %>%
+  toVisNetworkData()
+
+visNetwork(nodes = vis_network$nodes, edges = vis_network$edges,
+           width="100%",
+           main = "Redes interativas de autores por tipo de bem estudado") %>%
+  visGroups(groupname = "Authors", shape = "icon",
+            icon = list (code = "f007", color = "darkblue")) %>%
+  visGroups(groupname = "Theme2", shape = "icon",
+            icon = list (code = "f06b", color = "purple")) %>% 
+  addFontAwesome() %>%
+   visOptions(highlightNearest = list(enabled = TRUE, hover = TRUE),
+             nodesIdSelection = TRUE) %>%
+  visInteraction(navigationButtons = TRUE) 
+```
+
+
+## Quais são os top 10 articles?
+
+```{r}
+# Ordenar o dataset pelo número de interações em ordem decrescente
+artigos_escolhidos <- artigos_escolhidos[order(artigos_escolhidos$Cites, decreasing = T), ]
+
+# Selecionar os 10 vídeos mais vistos
+top_10_articles <- artigos_escolhidos[1:10, ]
+
+# Exibir a tabela
+kable(top_10_articles[, c("Title", "Authors", "Cites")], 
+      col.names = c("Título", "Autores", "Citações")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = "striped") %>%
+  add_header_above(c("Top 10 Artigos" = 4))
+```
+
+## Quais são os top 10 autores?
+```{r}
+total_autores <- nrow(artigos_escolhidos)
+
+top_autores <- head(author_counts, 6)
+
+top_autores <- top_autores %>%
+  mutate(Percentagem = (Count / total_autores) * 100)
+
+kable(top_autores, 
+      col.names = c("Autores", "Frequência", "Percentagem (%)")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = "striped") %>%
+  add_header_above(c("Os autores com maior número de publicações" = 3))
+```
+
+## Quais são os top 10 articles?
+
+```{r}
+# Regressão Quantidade de citações, ano
+
+filter (bd_pop, Cites>20, Year >= 2000) %>% 
+  ggplot(aes(x=Year, y=Cites)) +
+    geom_point(colour="black", size=1, shape = 5)+
+    geom_smooth(method="lm", se = F, show.legend = T, colour = "#DD8888") +
+    labs(title = "Regressão ano por quantidade de citações",
+         y = "Quantidade de citações", x = "Ano",
+         caption = "Fonte: Google Scholar") +
+  theme_classic()
+
+# Regressão Quantidade de papers, ano
+
+filter (bd_pop, Cites>20, Year >= 2000) %>% 
+  ggplot(aes(x=Year, y=Cites)) +
+    geom_point(colour="black", size=1, shape = 5)+
+    geom_smooth(method="lm", se = F, show.legend = T, colour = "#DD8888") +
+    labs(title = "Regressão ano por quantidade de citações",
+         y = "Quantidade de citações", x = "Ano",
+         caption = "Fonte: Google Scholar") +
+  theme_classic()
+```
